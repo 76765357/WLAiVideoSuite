@@ -21,7 +21,8 @@ A step-by-step guide to installing, configuring, and using **JBAiVideoSuite**.
 3. [Status Indicators](#status-indicators)
 4. [AI Assistant Chat](#ai-assistant-chat)
 5. [Comfy Generation Tab](#comfy-generation-tab)
-6. [Direct The Video Tab](#direct-the-video-tab)
+6. [Minimax Prompt Refine Tab](#minimax-prompt-refine-tab)
+7. [Direct The Video Tab](#direct-the-video-tab)
    - [Creating a Project](#creating-a-project)
    - [Opening a Project](#opening-a-project)
    - [Exporting a Project](#exporting-a-project)
@@ -132,6 +133,7 @@ Maps **system prompts** to app actions, and **ComfyUI workflows** to generation 
 | Generate Take Video Prompt | Builds consolidated video prompts for takes (groups of shots) |
 | Refine Dialog | Polishes dialogue lines |
 | Generate Shots | Breaks the script into a shot list |
+| Minimax Prompt Refine | Refines a MiniMax H3 prompt into a well-formatted 6-section prompt |
 
 **ComfyUI Generation Mapping** — for each generation action, pick which workflow JSON file (from `assets/workflows/`) to use.
 
@@ -727,6 +729,49 @@ A grid of all images and videos in `assets/generated/`.
 > **How it works:** When you click **Generate**, the app uploads any selected image/audio files to ComfyUI, injects all input values into the workflow JSON, and queues the job. The app polls ComfyUI at the configured interval (default 4 s) until the result is ready, then displays it in the preview area.
 
 > **Note:** If no workflows are available, the tab shows a message directing you to add some in **Settings → ComfyUI Workflows**.
+
+---
+
+## Minimax Prompt Refine Tab
+
+The **Minimax Prompt Refine** tab is a standalone tool for refining MiniMax H3 video prompts. It sits between the **Comfy Generation** and **Direct The Video** tabs.
+
+![Minimax Prompt Refine tab](images/placeholder.svg)
+
+### Input
+
+A large textarea (200px) where you paste a MiniMax-formatted prompt or type a scenario description.
+
+### Buttons
+
+| Button | What it does |
+|--------|--------------|
+| **Refine** (purple) | Sends the input text to the LLM using the *Minimax Prompt Refine* system prompt. The result is automatically loaded into the rich text view below. |
+| **Convert to Rich Text** (green) | Toggles the rich text view on/off. Works on whatever text is currently in the input box — no Refine needed. |
+| **Copy Prompt Below** (grey) | Copies the plain text content from the rich text view (or the input box if rich view is off) to the clipboard. |
+
+### Rich Text View
+
+When **Convert to Rich Text** is clicked (or after a successful Refine), the input text is rendered as an editable rich text view with color-coded highlighting:
+
+| Element | Color | Example |
+|---------|-------|---------|
+| **Section headers** | Indigo / Purple / Fuchsia / Cyan / Pink (per section) | `subject_definitions:`, `summary:`, `retention_analysis:`, `detailed_description:`, `overall_soundscape:`, `non_diegetic_music:` |
+| **Reference labels** | Indigo / Violet / Purple / Pink | `<Subject 1>`, `<Picture 2>`, `<Video 3>`, `<Audio 4>` |
+| **Shot markers** | Fuchsia | `[Shot 1]`, `[Shot 2]` |
+| **Timing data** | Cyan | `At 00:03.500`, `At 00:07.250` |
+| **Dialogue** | Pink | `<d>[English] Hello there.</d>` |
+
+The rich text view is **editable** — you can click into it and modify the text directly. Edits are preserved when you switch tabs and come back.
+
+### Setup
+
+1. Create a system prompt file (e.g. `assets/systemprompts/MinimaxPromptRefine_SystemPrompt.txt`) that instructs the LLM to output a well-formatted 6-section MiniMax prompt.
+2. In **Settings → System Prompts**, click **Refresh** to pick up the new file.
+3. In **Settings → App Settings**, map **Minimax Prompt Refine** to your prompt file under *LLM System Prompt Mapping*.
+4. Restart the backend to pick up the new route.
+
+> **Tip:** The 6-section format is: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, `non_diegetic_music`. The system prompt should instruct the LLM to produce output in exactly this structure.
 
 ---
 

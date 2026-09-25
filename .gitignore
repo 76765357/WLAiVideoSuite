@@ -11,8 +11,9 @@ backend/check_shots.py
 backend/prisma/database.db
 backend/dev.db
 
-# System prompts (each user generates their own)
+# System prompts (each user generates their own, except _v1 versions)
 assets/systemprompts/*.txt
+!assets/systemprompts/*_v1.txt
 
 # Generated assets (track folder, ignore contents)
 assets/generated/*

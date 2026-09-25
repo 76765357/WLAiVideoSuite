@@ -9,6 +9,7 @@ import FinalVideoStage from '../components/studio/FinalVideoStage';
 import ProjectLibrary from '../components/studio/ProjectLibrary';
 import Settings from './Settings';
 import ComfyUIPlayground from '../components/playground/ComfyUIPlayground';
+import MinimaxPromptRefine from '../components/MinimaxPromptRefine';
 import Docs from '../components/Docs';
 import ChatPanel from '../components/ChatPanel';
 import { useSettingsStore } from '../store/settingsStore';
@@ -23,6 +24,9 @@ const Studio = () => {
   const [selectedEpisode, setSelectedEpisode] = useState(1);
   const [chatOpen, setChatOpen] = useState(true);
   const [takesEnabled, setTakesEnabled] = useState(false);
+  const [minimaxInput, setMinimaxInput] = useState('');
+  const [minimaxResult, setMinimaxResult] = useState('');
+  const [minimaxShowRich, setMinimaxShowRich] = useState(false);
   useEffect(() => {
     const v = localStorage.getItem('takesEnabled');
     if (v === 'true') setTakesEnabled(true);
@@ -121,6 +125,12 @@ const Studio = () => {
             className={`transition-colors ${activeTab === 'playground' ? 'border-b-2 border-accent text-accent' : 'text-muted-foreground hover:text-foreground'}`}
           >
             Comfy Generation
+          </button>
+          <button 
+            onClick={() => setActiveTab('minimax-refine')}
+            className={`transition-colors ${activeTab === 'minimax-refine' ? 'border-b-2 border-accent text-accent' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Minimax Prompt Refine
           </button>
           <button 
             onClick={() => setActiveTab('docs')}
@@ -358,6 +368,19 @@ const Studio = () => {
           {activeTab === 'playground' && (
             <div className="flex flex-1 items-center justify-center p-8">
               <ComfyUIPlayground />
+            </div>
+          )}
+
+          {activeTab === 'minimax-refine' && (
+            <div className="flex-1 overflow-y-auto">
+              <MinimaxPromptRefine
+                input={minimaxInput}
+                onInputChange={setMinimaxInput}
+                result={minimaxResult}
+                onResultChange={setMinimaxResult}
+                showRich={minimaxShowRich}
+                onShowRichChange={setMinimaxShowRich}
+              />
             </div>
           )}
 

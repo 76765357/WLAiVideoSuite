@@ -10,6 +10,7 @@ const APP_ACTIONS = [
   'Generate Take Video Prompt',
   'Refine Dialog',
   'Generate Shots',
+  'Minimax Prompt Refine',
 ];
 
 const ASSET_JSON_FORMAT = `{

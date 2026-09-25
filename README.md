@@ -1,5 +1,7 @@
 # JBAiVideoSuite
 
+> **This is a personal project for my own use cases.**
+
 > 📖 **Access detailed documentation:** [https://juwalbose.github.io/JBAiVideoSuite/](https://juwalbose.github.io/JBAiVideoSuite/)
 
 An AI-powered video production pipeline that takes you from a raw story idea to a final video through six stages:
@@ -23,6 +25,7 @@ Built with Next.js (frontend), FastAPI (backend), Prisma + SQLite (database), an
 - **Final Video** — Two sub-tabs, each with a Source radio (Use Shots / Use Takes) when takes are enabled:
   - **Generate Clips** — Per-shot or per-take video generation via ComfyUI (MinimaxH3 Ref2VA workflow). Editable prompt, asset previews (location/characters/props), audio players, seed + duration controls, low/high-res generation, save to shot or take
   - **Assemble Clips** — Full-width video preview (16:9), shot/take strip with thumbnails, play sequence (auto-advances through shots or takes), export placeholder
+- **Minimax Prompt Refine** — Paste a MiniMax H3 prompt or scenario, refine it via LLM into a well-formatted 6-section prompt with color-coded rich text highlighting (sections, reference labels, shots, timing, dialogue)
 - **Playground** — Run ComfyUI workflows with a visual gallery and input manager (image + audio inputs)
 - **Chat Panel** — LLM chat with system prompt support
 - **Settings** — Configure LLM, ComfyUI, backend, workflows, system prompts, app action mappings, and video resolution presets
