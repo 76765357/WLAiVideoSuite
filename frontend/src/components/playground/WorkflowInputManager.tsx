@@ -3,6 +3,22 @@ import WorkflowInputs from './WorkflowInputs';
 import GenerationResult from './GenerationResult';
 import { useSettingsStore } from '../../store/settingsStore';
 
+function formatApiError(raw: string): string {
+  const trimmed = raw.trim();
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed.detail === 'string' && parsed.detail.trim()) {
+      return parsed.detail.trim();
+    }
+    if (typeof parsed.details === 'string' && parsed.details.trim()) {
+      return parsed.details.trim();
+    }
+  } catch {
+    // Response body is already plain text.
+  }
+  return trimmed || 'Generation failed';
+}
+
 interface InputField {
   type: 'string' | 'int' | 'float' | 'image' | 'audio';
   value: string | number;
@@ -41,8 +57,11 @@ const WorkflowInputManager = ({
   const [inputValues, setInputValues] = useState<Record<string, any>>({});
   const [resultType, setResultType] = useState<'image' | 'video'>('image');
   const [genError, setGenError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPollingRef = useRef(false);
+  const pollAgainRef = useRef(false);
+  const unmountedRef = useRef(false);
   const editedRolesRef = useRef<Set<string>>(new Set());
   const { comfyui } = useSettingsStore();
   const pollInterval = comfyui.pollInterval || 4000;
@@ -71,58 +90,82 @@ const WorkflowInputManager = ({
     }
   }, [activeWorkflowData]);
 
-  const runPollCycle = async () => {
-    if (isPollingRef.current) return;
-    isPollingRef.current = true;
+  const schedulePoll = () => {
+    if (unmountedRef.current || pollTimerRef.current !== null) return;
+    pollTimerRef.current = setTimeout(() => {
+      pollTimerRef.current = null;
+      void runPollCycleRef.current();
+    }, pollIntervalRef.current);
+  };
 
-    try {
-      const activeRes = await fetch(`${baseUrlRef.current}/playground/active`);
-      if (!activeRes.ok) {
-        isPollingRef.current = false;
-        return;
-      }
-      const activeData = await activeRes.json();
-      const tasks: string[] = activeData.tasks || [];
-      onQueueChangeRef.current(tasks.length);
+  const pollOnce = async () => {
+    const activeRes = await fetch(`${baseUrlRef.current}/playground/active`);
+    if (!activeRes.ok) return;
 
-      if (tasks.length === 0) {
-        isPollingRef.current = false;
-        return;
-      }
+    const activeData = await activeRes.json();
+    const tasks: string[] = activeData.tasks || [];
+    let remaining = tasks.length;
 
-      for (const taskId of tasks) {
-        try {
-          const res = await fetch(`${baseUrlRef.current}/playground/status/${taskId}`);
-          if (res.status === 404) continue;
-
-          const contentType = res.headers.get('content-type') || '';
-          if (contentType.startsWith('image/') || contentType.startsWith('video/')) {
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            onResultImageRef.current(url);
-            fetch(`${baseUrlRef.current}/playground/status/${taskId}`, { method: 'DELETE' }).catch(() => {});
-          }
-        } catch (err) {
-          console.error(`[Gen] Poll error for task ${taskId}:`, err);
+    for (const taskId of tasks) {
+      try {
+        const res = await fetch(`${baseUrlRef.current}/playground/status/${taskId}`);
+        if (res.status === 404) {
+          remaining -= 1;
+          continue;
         }
+
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.startsWith('image/') || contentType.startsWith('video/')) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          onResultImageRef.current(url);
+          remaining -= 1;
+          fetch(`${baseUrlRef.current}/playground/status/${taskId}`, { method: 'DELETE' }).catch(() => {});
+          continue;
+        }
+
+        if (contentType.includes('json')) {
+          const data = await res.json();
+          if (data.status === 'error') {
+            remaining -= 1;
+            setGenError(data.details || 'Generation failed');
+          }
+        }
+      } catch (err) {
+        console.error(`[Gen] Poll error for task ${taskId}:`, err);
       }
+    }
+
+    onQueueChangeRef.current(Math.max(0, remaining));
+  };
+
+  const runPollCycle = async () => {
+    if (isPollingRef.current) {
+      pollAgainRef.current = true;
+      return;
+    }
+    isPollingRef.current = true;
+    try {
+      do {
+        pollAgainRef.current = false;
+        await pollOnce();
+      } while (pollAgainRef.current);
     } catch (err) {
       console.error('[Gen] Poll cycle error:', err);
-    }
-
-    isPollingRef.current = false;
-    pollTimerRef.current = setTimeout(runPollCycle, pollIntervalRef.current);
-  };
-
-  const startPolling = () => {
-    if (pollTimerRef.current === null) {
-      pollTimerRef.current = setTimeout(runPollCycle, pollIntervalRef.current);
+    } finally {
+      isPollingRef.current = false;
+      schedulePoll();
     }
   };
+
+  const runPollCycleRef = useRef(runPollCycle);
+  runPollCycleRef.current = runPollCycle;
 
   useEffect(() => {
-    startPolling();
+    unmountedRef.current = false;
+    void runPollCycleRef.current();
     return () => {
+      unmountedRef.current = true;
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current);
         pollTimerRef.current = null;
@@ -131,7 +174,8 @@ const WorkflowInputManager = ({
   }, []);
 
   const handleGenerate = async () => {
-    if (!activeWorkflowData || !activeWorkflowData.is_valid) return;
+    if (!activeWorkflowData || !activeWorkflowData.is_valid || isSubmitting) return;
+    setGenError('');
 
     const fileRoles = Object.entries(inputValues).filter(([_, value]) =>
       value?.type === 'image' || value?.type === 'audio'
@@ -167,18 +211,19 @@ const WorkflowInputManager = ({
 
     const finalInputs: Record<string, any> = {};
 
-    for (const [role, data] of Object.entries(inputValues)) {
-      if (data?.type === 'image' || data?.type === 'audio') {
-        // Only include image/audio inputs that were actually edited
-        if (!editedRolesRef.current.has(role)) continue;
+    setIsSubmitting(true);
+    try {
+      for (const [role, data] of Object.entries(inputValues)) {
+        if (data?.type === 'image' || data?.type === 'audio') {
+          // Only include image/audio inputs that were actually edited
+          if (!editedRolesRef.current.has(role)) continue;
 
-        const nodeMap = data.type === 'image'
-          ? activeWorkflowData.image_node_map
-          : activeWorkflowData.audio_node_map;
-        const nodeId = nodeMap?.[role] || role;
+          const nodeMap = data.type === 'image'
+            ? activeWorkflowData.image_node_map
+            : activeWorkflowData.audio_node_map;
+          const nodeId = nodeMap?.[role] || role;
 
-        if (data.value instanceof File) {
-          try {
+          if (data.value instanceof File) {
             const formData = new FormData();
             formData.append('file', data.value);
 
@@ -187,29 +232,28 @@ const WorkflowInputManager = ({
               body: formData,
             });
 
-            if (!res.ok) throw new Error(`Upload failed for "${role}" (node ${nodeId})`);
+            if (!res.ok) {
+              const errorText = await res.text();
+              setGenError(formatApiError(errorText) || `Upload failed for "${role}"`);
+              return;
+            }
 
             const resultData = await res.json();
             setInputValues(prev => ({ ...prev, [role]: { type: data.type, value: resultData.name } }));
             finalInputs[role] = [nodeId, resultData.name];
-          } catch (err: any) {
-            setGenError(`Upload failed: ${err.message}`);
-            return;
+          } else {
+            finalInputs[role] = [nodeId, data.value];
           }
         } else {
-          finalInputs[role] = [nodeId, data.value];
+          finalInputs[role] = data.value;
         }
-      } else {
-        finalInputs[role] = data.value;
       }
-    }
 
-    const payload = {
-      workflow_id: workflowId,
-      inputs: finalInputs
-    };
+      const payload = {
+        workflow_id: workflowId,
+        inputs: finalInputs
+      };
 
-    try {
       const response = await fetch(`${baseUrl}/playground/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -218,20 +262,21 @@ const WorkflowInputManager = ({
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Server responded with ${response.status}: ${errorText}`);
+        setGenError(formatApiError(errorText));
+        return;
       }
 
       const data = await response.json();
       console.log(`[Gen] Queued: task_id=${data.task_id}`);
-      onQueueChangeRef.current(queueCount + 1);
-      // Poll immediately for fast workflows, then continue normal interval
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current);
         pollTimerRef.current = null;
       }
-      runPollCycle();
-    } catch (error) {
-      console.error("[Gen] Failed to queue generation:", error);
+      void runPollCycleRef.current();
+    } catch (error: any) {
+      setGenError(error?.message || 'Failed to queue generation');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -373,11 +418,12 @@ const WorkflowInputManager = ({
             </div>
           )}
           <button
+            type="button"
             onClick={handleGenerate}
-            disabled={!activeWorkflowData.is_valid || queueCount > 0}
-            className={`px-4 py-2 rounded font-bold text-white transition-all ${queueCount > 0 ? 'bg-accent/60' : 'bg-accent hover:scale-105 shadow-lg'}`}
+            disabled={!activeWorkflowData.is_valid || isSubmitting}
+            className="px-4 py-2 rounded font-bold text-white transition-all bg-accent hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
-            {queueCount > 0 ? 'Queue Another' : 'Generate'}
+            {isSubmitting ? 'Queuing...' : queueCount > 0 ? 'Queue Another' : 'Generate'}
           </button>
         </div>
       </div>

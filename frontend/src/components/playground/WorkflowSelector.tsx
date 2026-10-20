@@ -10,9 +10,10 @@ interface WorkflowSelectorProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   queueCount: number;
+  onClearQueue: () => void;
 }
 
-const WorkflowSelector = ({ workflows, selectedId, onSelect, queueCount }: WorkflowSelectorProps) => {
+const WorkflowSelector = ({ workflows, selectedId, onSelect, queueCount, onClearQueue }: WorkflowSelectorProps) => {
   return (
     <div className="flex items-center gap-3">
       <select
@@ -25,9 +26,18 @@ const WorkflowSelector = ({ workflows, selectedId, onSelect, queueCount }: Workf
         ))}
       </select>
       {queueCount > 0 ? (
-        <span className="text-xs font-medium text-warning bg-warning/10 px-2 py-1 rounded-full">
-          {queueCount} task{queueCount !== 1 ? 's' : ''} queued
-        </span>
+        <>
+          <span className="text-xs font-medium text-warning bg-warning/10 px-2 py-1 rounded-full">
+            {queueCount} task{queueCount !== 1 ? 's' : ''} queued
+          </span>
+          <button
+            type="button"
+            onClick={onClearQueue}
+            className="text-xs font-medium text-destructive underline"
+          >
+            Clear
+          </button>
+        </>
       ) : (
         <span className="text-xs font-medium text-success bg-success/10 px-2 py-1 rounded-full">
           Gen complete

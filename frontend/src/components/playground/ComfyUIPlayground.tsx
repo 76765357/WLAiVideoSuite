@@ -35,6 +35,15 @@ const ComfyUIPlayground = () => {
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [queueCount, setQueueCount] = useState(0);
 
+  const handleClearQueue = async () => {
+    setQueueCount(0);
+    try {
+      await fetch(`${baseUrl}/playground/active`, { method: 'DELETE' });
+    } catch (error) {
+      console.error('Failed to clear the generation queue:', error);
+    }
+  };
+
   // Effect 1: Fetch all workflows from the folder on mount
   useEffect(() => {
     const fetchWorkflows = async () => {
@@ -113,6 +122,7 @@ const ComfyUIPlayground = () => {
             selectedId={selectedWorkflowId} 
             onSelect={setSelectedWorkflowId}
             queueCount={queueCount}
+            onClearQueue={handleClearQueue}
           />
 
           <section>

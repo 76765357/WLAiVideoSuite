@@ -146,7 +146,7 @@ async def generate_video(id: str, payload: dict, db: Any = Depends(get_db)):
     # so ComfyUI can actually find them.
     assets_dir = ASSETS_DIR
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
         # Upload images
         for i, rel_path in enumerate(image_files):
             local_path = os.path.join(assets_dir, rel_path)
@@ -255,7 +255,7 @@ async def generate_video(id: str, payload: dict, db: Any = Depends(get_db)):
     print(json.dumps(workflow_data, indent=2))
     print("-----------------------------------------------\n")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
         queue_res = await client.post(f"{comfy_http}/prompt", json={"prompt": workflow_data})
         if queue_res.status_code != 200:
             return {"status": "error", "details": f"ComfyUI rejected prompt: {queue_res.text}"}
@@ -288,7 +288,7 @@ async def check_video_status(id: str, task_id: str, db: Any = Depends(get_db)):
 
     comfy_http = f"http://{comfyui.ip}:{comfyui.port}"
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
         history_res = await client.get(f"{comfy_http}/history/{prompt_id}")
         history_data = history_res.json()
         entry = history_data.get(prompt_id, {})

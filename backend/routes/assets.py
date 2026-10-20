@@ -528,7 +528,7 @@ async def generate_image(id: str, asset_id: str, payload: dict, db: Any = Depend
         comfy_http = f"http://{comfyui.ip}:{comfyui.port}"
         task_id = str(uuid.uuid4())
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             queue_res = await client.post(f"{comfy_http}/prompt", json={"prompt": workflow_data})
             if queue_res.status_code != 200:
                 return {"status": "error", "details": f"ComfyUI rejected prompt: {queue_res.text}"}
@@ -555,7 +555,7 @@ async def check_image_status(id: str, asset_id: str, task_id: str, db: Any = Dep
 
     comfy_http = f"http://{comfyui.ip}:{comfyui.port}"
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
         history_res = await client.get(f"{comfy_http}/history/{prompt_id}")
         history_data = history_res.json()
         entry = history_data.get(prompt_id, {})
@@ -664,7 +664,7 @@ async def generate_sheet(id: str, asset_id: str, payload: dict, db: Any = Depend
         files = {"image": (filename, file_bytes, "image/png")}
         data = {"overwrite": "true"}
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
             upload_res = await client.post(f"{comfy_http}/upload/image", files=files, data=data)
             if upload_res.status_code != 200:
                 return {"status": "error", "details": f"ComfyUI rejected upload: {upload_res.text}"}
@@ -687,7 +687,7 @@ async def generate_sheet(id: str, asset_id: str, payload: dict, db: Any = Depend
 
         task_id = str(uuid.uuid4())
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             queue_res = await client.post(f"{comfy_http}/prompt", json={"prompt": workflow_data})
             if queue_res.status_code != 200:
                 return {"status": "error", "details": f"ComfyUI rejected prompt: {queue_res.text}"}

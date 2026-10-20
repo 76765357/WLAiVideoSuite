@@ -17,7 +17,7 @@ async def check_comfyui(host: str = Query("127.0.0.1"), port: int = Query(8188))
     target_url = f"http://{host}:{port}"
     timeout = httpx.Timeout(3.0, connect=2.0)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         try:
             # /system_stats is native to ComfyUI and returns hardware stats
             response = await client.get(f"{target_url}/system_stats")
@@ -47,17 +47,18 @@ async def check_comfyui(host: str = Query("127.0.0.1"), port: int = Query(8188))
                     details=f"Server reachable, but returned HTTP {response.status_code}."
                 )
 
-        except (httpx.ConnectError, httpx.ConnectTimeout):
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
             return ComfyUIStatus(
                 available=False,
                 url=target_url,
                 details=f"Failed to connect to ComfyUI at {target_url}. Ensure it is running and listening."
             )
         except Exception as e:
+            message = str(e).strip() or type(e).__name__
             return ComfyUIStatus(
                 available=False,
                 url=target_url,
-                details=f"Error checking ComfyUI: {str(e)}"
+                details=f"Error checking ComfyUI: {message}"
             )
 
 @router.post("/upload")
@@ -86,7 +87,7 @@ async def upload_to_comfy(file: UploadFile = File(...)):
     }
     data = {"overwrite": "true"}
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
         try:
             res = await client.post(
                 f"{target_url}/upload/image", files=files, data=data

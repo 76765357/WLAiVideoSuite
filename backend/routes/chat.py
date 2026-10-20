@@ -65,7 +65,7 @@ async def chat(req: ChatRequest, db: Any = Depends(get_db)):
 
     timeout = httpx.Timeout(300.0, connect=10.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             result = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")

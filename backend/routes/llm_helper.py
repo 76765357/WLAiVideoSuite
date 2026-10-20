@@ -30,7 +30,7 @@ async def call_llm(db, system_prompt: str, user_content: str) -> str:
         "max_tokens": max_tokens,
     }
     print(f"[LLM] user_content:\n{user_content}")
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=LLM_TIMEOUT, trust_env=False) as client:
         response = await client.post(url, json=payload)
         response.raise_for_status()
         result = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")

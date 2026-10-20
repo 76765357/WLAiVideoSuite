@@ -104,6 +104,107 @@ def _prune_unused_inputs(workflow_data: dict, provided_node_ids: set) -> dict:
     print(f"[Prune] removed {len(to_remove)} unused input node(s): {to_remove}")
     return workflow_data
 
+
+def _short_text(text: str, limit: int = 220) -> str:
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
+
+
+def _format_comfy_rejection(body: str) -> str:
+    """Turn a ComfyUI /prompt error body into a short, readable message."""
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return _short_text(body)
+
+    parts = []
+    node_errors = data.get("node_errors") or {}
+    if isinstance(node_errors, dict):
+        for node_id, info in node_errors.items():
+            if not isinstance(info, dict):
+                continue
+            class_type = info.get("class_type") or "node"
+            for err in info.get("errors") or []:
+                if not isinstance(err, dict):
+                    continue
+                extra = err.get("extra_info") or {}
+                input_name = extra.get("input_name")
+                received = extra.get("received_value")
+                if input_name and received is not None:
+                    parts.append(f"{class_type} ({node_id}): {input_name} '{received}' is not available")
+                else:
+                    parts.append(f"{class_type} ({node_id}): {err.get('details') or err.get('message') or 'invalid'}")
+
+    if parts:
+        return "ComfyUI rejected the prompt. " + _short_text(" | ".join(parts))
+
+    err = data.get("error") or {}
+    if isinstance(err, dict) and err.get("message"):
+        return _short_text(f"ComfyUI rejected the prompt: {err.get('message')}")
+    return _short_text(body)
+
+
+def _comfy_failure_detail(entry: dict) -> Optional[str]:
+    """Read a finished-but-failed ComfyUI history entry.
+
+    ComfyUI stores the outcome in status.status_str and status.messages,
+    not in status.status.
+    """
+    status_info = entry.get("status") or {}
+    if not isinstance(status_info, dict):
+        return None
+
+    for msg in status_info.get("messages") or []:
+        if not isinstance(msg, (list, tuple)) or not msg:
+            continue
+        event = msg[0]
+        payload = msg[1] if len(msg) > 1 and isinstance(msg[1], dict) else {}
+        if event == "execution_error":
+            text = payload.get("exception_message") or payload.get("exception_type") or "ComfyUI generation failed"
+            node_type = payload.get("node_type") or ""
+            node_id = payload.get("node_id") or ""
+            where = " ".join(part for part in (str(node_type), str(node_id)) if part).strip()
+            if where:
+                return _short_text(f"{text} ({where})")
+            return _short_text(str(text))
+        if event == "execution_interrupted":
+            return "ComfyUI generation was interrupted"
+
+    status_str = status_info.get("status_str") or status_info.get("status")
+    if status_str == "error":
+        return _short_text(status_info.get("message") or "ComfyUI generation failed")
+    return None
+
+
+def _queue_prompt_ids(queue_data: dict) -> set:
+    ids = set()
+    for key in ("queue_running", "queue_pending"):
+        for item in queue_data.get(key) or []:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                ids.add(str(item[1]))
+    return ids
+
+
+async def _cancel_comfy_prompts(db, prompt_ids: list) -> None:
+    """Interrupt and drop only the prompts this playground still tracks."""
+    if not prompt_ids:
+        return
+    comfyui = await db.comfyuisettings.find_first()
+    if not comfyui:
+        return
+    comfy_http = f"http://{comfyui.ip}:{comfyui.port}"
+    try:
+        async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
+            queue_res = await client.get(f"{comfy_http}/queue")
+            queue_data = queue_res.json() if queue_res.status_code == 200 else {}
+            if _queue_prompt_ids({"queue_running": queue_data.get("queue_running") or []}).intersection(prompt_ids):
+                await client.post(f"{comfy_http}/interrupt")
+            await client.post(f"{comfy_http}/queue", json={"delete": prompt_ids})
+    except Exception as exc:
+        print(f"[Cleanup] ComfyUI cancel failed: {exc}")
+
 @router.post("/generate")
 async def generate(request: GenerateRequest, db: Any = Depends(get_db)):
     """Submit a generation to the ComfyUI queue. Returns task_id immediately."""
@@ -144,19 +245,28 @@ async def generate(request: GenerateRequest, db: Any = Depends(get_db)):
 
     task_id = str(uuid.uuid4())
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        payload = {"prompt": workflow_data}
-        queue_res = await client.post(f"{comfy_http}/prompt", json=payload)
+    timeout = httpx.Timeout(30.0, connect=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            payload = {"prompt": workflow_data}
+            queue_res = await client.post(f"{comfy_http}/prompt", json=payload)
 
-        if queue_res.status_code != 200:
-            raise HTTPException(
-                status_code=500,
-                detail=f"ComfyUI rejected prompt: {queue_res.text}",
-            )
+            if queue_res.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=_format_comfy_rejection(queue_res.text),
+                )
 
-        prompt_id = queue_res.json()["prompt_id"]
-        active_tasks[task_id] = (prompt_id, time.time())
-        print(f"[Queue] task_id={task_id} prompt_id={prompt_id} (active: {len(active_tasks)})")
+            prompt_id = queue_res.json()["prompt_id"]
+            active_tasks[task_id] = (prompt_id, time.time())
+            print(f"[Queue] task_id={task_id} prompt_id={prompt_id} (active: {len(active_tasks)})")
+    except HTTPException:
+        raise
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"ComfyUI is unreachable at {comfy_http}. {exc.__class__.__name__}",
+        )
 
     # Small delay to let ComfyUI register the prompt in history before we return
     await asyncio.sleep(0.5)
@@ -170,7 +280,7 @@ async def check_status(task_id: str, db: Any = Depends(get_db)):
         print(f"[Status] task_id={task_id} NOT FOUND in active_tasks ({len(active_tasks)} tasks)")
         raise HTTPException(status_code=404, detail="Task not found.")
 
-    prompt_id, _ts = active_tasks[task_id]
+    prompt_id, queued_at = active_tasks[task_id]
 
     comfyui = await db.comfyuisettings.find_first()
     if not comfyui:
@@ -178,19 +288,52 @@ async def check_status(task_id: str, db: Any = Depends(get_db)):
 
     comfy_http = f"http://{comfyui.ip}:{comfyui.port}"
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        history_res = await client.get(f"{comfy_http}/history/{prompt_id}")
+    async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+        try:
+            history_res = await client.get(f"{comfy_http}/history/{prompt_id}")
+        except Exception as exc:
+            print(f"[Status] task_id={task_id} history check failed: {exc}")
+            return {"status": "pending", "task_id": task_id}
+
+        if history_res.status_code != 200:
+            print(f"[Status] task_id={task_id} history HTTP {history_res.status_code}")
+            return {"status": "pending", "task_id": task_id}
+
         history_data = history_res.json()
         entry = history_data.get(prompt_id, {})
-        outputs = entry.get("outputs", {})
 
-        # M1: check for ComfyUI errors before assuming pending
-        status_info = entry.get("status", {})
-        if status_info.get("status") == "error":
-            detail = status_info.get("message", "ComfyUI generation failed")
+        # A missing history entry means the prompt is still queued, or ComfyUI dropped it.
+        if not entry:
+            age = time.time() - queued_at
+            if age >= 20:
+                try:
+                    queue_res = await client.get(f"{comfy_http}/queue")
+                    queue_data = queue_res.json() if queue_res.status_code == 200 else {}
+                    still_queued = prompt_id in _queue_prompt_ids(queue_data)
+                except Exception as exc:
+                    print(f"[Status] task_id={task_id} queue check failed: {exc}")
+                    still_queued = True
+                if not still_queued:
+                    history_res = await client.get(f"{comfy_http}/history/{prompt_id}")
+                    if history_res.status_code == 200:
+                        entry = history_res.json().get(prompt_id, {})
+                    if not entry:
+                        active_tasks.pop(task_id, None)
+                        detail = "Generation is no longer in the ComfyUI queue"
+                        print(f"[Status] task_id={task_id} prompt_id={prompt_id} -> ERROR: {detail}")
+                        return {"status": "error", "details": detail, "task_id": task_id}
+
+        if not entry:
+            print(f"[Status] task_id={task_id} prompt_id={prompt_id} -> PENDING")
+            return {"status": "pending", "task_id": task_id}
+
+        failure = _comfy_failure_detail(entry)
+        if failure:
             active_tasks.pop(task_id, None)
-            print(f"[Status] task_id={task_id} prompt_id={prompt_id} -> ERROR: {detail}")
-            return {"status": "error", "details": detail, "task_id": task_id}
+            print(f"[Status] task_id={task_id} prompt_id={prompt_id} -> ERROR: {failure}")
+            return {"status": "error", "details": failure, "task_id": task_id}
+
+        outputs = entry.get("outputs", {})
 
         output_info = None
         output_type = None
@@ -205,6 +348,12 @@ async def check_status(task_id: str, db: Any = Depends(get_db)):
                 break
 
         if not output_info:
+            status_info = entry.get("status") or {}
+            if isinstance(status_info, dict) and status_info.get("completed") and status_info.get("status_str") == "success":
+                active_tasks.pop(task_id, None)
+                detail = "ComfyUI finished without an image or video output"
+                print(f"[Status] task_id={task_id} prompt_id={prompt_id} -> ERROR: {detail}")
+                return {"status": "error", "details": detail, "task_id": task_id}
             print(f"[Status] task_id={task_id} prompt_id={prompt_id} -> PENDING")
             return {"status": "pending", "task_id": task_id}
 
@@ -261,9 +410,11 @@ async def get_active_tasks(db: Any = Depends(get_db)):
     return {"tasks": list(active_tasks.keys()), "count": len(active_tasks)}
 
 @router.delete("/active")
-async def clear_all_tasks():
-    """Clear all active tasks (cleanup stale entries from previous runs)."""
-    count = len(active_tasks)
+async def clear_all_tasks(db: Any = Depends(get_db)):
+    """Drop tracked tasks and cancel those prompts in ComfyUI."""
+    tracked = list(active_tasks.items())
+    prompt_ids = [info[0] for _task_id, info in tracked]
     active_tasks.clear()
-    print(f"[Cleanup] Cleared all tasks ({count} removed)")
-    return {"status": "cleared", "count": count}
+    await _cancel_comfy_prompts(db, prompt_ids)
+    print(f"[Cleanup] Cleared all tasks ({len(tracked)} removed)")
+    return {"status": "cleared", "count": len(tracked)}

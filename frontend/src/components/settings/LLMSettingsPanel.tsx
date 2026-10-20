@@ -30,7 +30,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
     setIsTesting(true);
     setTestStatus('Testing...');
     try {
-      const response = await fetch(`${backend.apiUrl}/llm-test`);
+      const response = await fetch(`${backend.apiUrl}/llm-test?ip=${encodeURIComponent(llm.ip)}&port=${llm.port}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -47,7 +47,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
     } catch (error) {
       console.error('LLM Test Error:', error);
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
-        setTestStatus('🔴 Unreachable (Check IP/Port or if LM Studio is open)');
+        setTestStatus('🔴 Unreachable (Check IP/Port or if Ollama is running)');
       } else {
         setTestStatus(`🔴 Error: ${(error as Error).message}`);
       }
@@ -124,17 +124,27 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
         <div>
           <h3 className="text-sm font-bold text-foreground mb-2">Available Models:</h3>
           <ul className="list-disc ml-5 text-sm text-muted-foreground">
-            {availableModels.map((m: any, i) => (
-              <li key={i}>
-                {typeof m === 'object' ? (
-                  <span>
-                    <span className="font-mono text-xs">{m.key}</span>
-                    <span className="ml-2 text-muted-foreground">({m.display_name})</span>
-                    {m.loaded_instances?.length > 0 && <span className="ml-2 text-green-500">● loaded</span>}
-                  </span>
-                ) : m}
-              </li>
-            ))}
+            {availableModels.map((m: any, i) => {
+              const modelKey = typeof m === 'object' ? m.key : m;
+              return (
+                <li key={i}>
+                  <button
+                    type="button"
+                    className="text-left hover:text-foreground"
+                    onClick={() => setLLM({ modelName: modelKey })}
+                    title="Use this model"
+                  >
+                    {typeof m === 'object' ? (
+                      <span>
+                        <span className="font-mono text-xs">{m.key}</span>
+                        <span className="ml-2 text-muted-foreground">({m.display_name})</span>
+                        {m.loaded_instances?.length > 0 && <span className="ml-2 text-green-500">● loaded</span>}
+                      </span>
+                    ) : m}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

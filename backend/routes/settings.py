@@ -11,10 +11,10 @@ from models import (
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
 async def call_llm(prompt: str, db) -> str:
-    """Helper to call LM Studio's local LLM using the OpenAI SDK."""
+    """Call the configured local LLM through its OpenAI-compatible API."""
     llm = await db.llmsettings.find_first()
     if not llm:
-        return "LM Studio Error: No LLM settings found in database."
+        return "LLM Error: No LLM settings found in database."
 
     ip, port, modelName, temperature = llm.ip, llm.port, llm.modelName, llm.temperature
 
@@ -29,7 +29,7 @@ async def call_llm(prompt: str, db) -> str:
     }
     timeout = httpx.Timeout(300.0, connect=10.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             response = await client.post(url, json=payload)
             print(f'DEBUG: Request sent to {url}')
             print(f'DEBUG: Response Status Code: {response.status_code}')
@@ -39,7 +39,7 @@ async def call_llm(prompt: str, db) -> str:
             return result
     except Exception as e:
         print(f'DEBUG: Error in call_llm: {e}')
-        return f"LM Studio Error: {str(e)}"
+        return f"LLM Error: {str(e)}"
 
 @router.get("/")
 async def get_settings(db = Depends(get_db)):
